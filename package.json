@@ -78,5 +78,22 @@
   "engines": {
     "node": ">=22",
     "npm": ">=10.9.2"
+  },
+  "quartz": {
+    "name": "created-modified-date",
+    "displayName": "Created/Modified Date",
+    "category": "transformer",
+    "version": "1.0.0",
+    "quartzVersion": ">=5.0.0",
+    "dependencies": [],
+    "defaultOrder": 10,
+    "defaultEnabled": true,
+    "defaultOptions": {
+      "priority": [
+        "frontmatter",
+        "git",
+        "filesystem"
+      ]
+    }
   }
 }
