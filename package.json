@@ -94,6 +94,19 @@
         "git",
         "filesystem"
       ]
+    },
+    "optionSchema": {
+      "priority": {
+        "type": "array",
+        "items": {
+          "type": "enum",
+          "values": [
+            "frontmatter",
+            "git",
+            "filesystem"
+          ]
+        }
+      }
     }
   }
 }
