@@ -1,6 +1,6 @@
 import fs from "fs";
 import { Repository } from "@napi-rs/simple-git";
-import type { QuartzTransformerPlugin, BuildCtx } from "@quartz-community/types";
+import type { QuartzTransformerPlugin } from "@quartz-community/types";
 import type { VFile } from "vfile";
 import type { Root } from "mdast";
 import path from "path";
@@ -17,7 +17,7 @@ const defaultOptions: CreatedModifiedDateOptions = {
 // YYYY-MM-DD
 const iso8601DateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
 
-function coerceDate(fp: string, d: any): Date {
+function coerceDate(fp: string, d: unknown): Date {
   // check ISO8601 date-only format
   // we treat this one as local midnight as the normal
   // js date ctor treats YYYY-MM-DD as UTC midnight
@@ -25,7 +25,8 @@ function coerceDate(fp: string, d: any): Date {
     d = `${d}T00:00:00`;
   }
 
-  const dt = new Date(d);
+  const dt =
+    d === undefined ? new Date() : d === null ? new Date(0) : new Date(d as string | number | Date);
   const invalidDate = isNaN(dt.getTime()) || dt.getTime() === 0;
   if (invalidDate && d !== undefined) {
     console.log(
@@ -39,7 +40,23 @@ function coerceDate(fp: string, d: any): Date {
   return invalidDate ? new Date() : dt;
 }
 
-type MaybeDate = undefined | string | number;
+type MaybeDate = undefined | string | number | Date | null;
+type FrontmatterDates = {
+  created?: MaybeDate;
+  modified?: MaybeDate;
+  published?: MaybeDate;
+};
+
+type FileData = {
+  relativePath?: string;
+  filePath?: string;
+  frontmatter?: FrontmatterDates;
+  dates?: {
+    created: Date;
+    modified: Date;
+    published: Date;
+  };
+};
 export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifiedDateOptions>> = (
   userOpts,
 ) => {
@@ -70,17 +87,18 @@ export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifie
             let modified: MaybeDate = undefined;
             let published: MaybeDate = undefined;
 
-            const fp = (file.data as any).relativePath!;
-            const fullFp = (file.data as any).filePath!;
+            const data = file.data as FileData;
+            const fp = data.relativePath!;
+            const fullFp = data.filePath!;
             for (const source of opts.priority) {
               if (source === "filesystem") {
                 const st = await fs.promises.stat(fullFp);
                 created ||= st.birthtimeMs;
                 modified ||= st.mtimeMs;
-              } else if (source === "frontmatter" && (file.data as any).frontmatter) {
-                created ||= (file.data as any).frontmatter.created as MaybeDate;
-                modified ||= (file.data as any).frontmatter.modified as MaybeDate;
-                published ||= (file.data as any).frontmatter.published as MaybeDate;
+              } else if (source === "frontmatter" && data.frontmatter) {
+                created ||= data.frontmatter.created;
+                modified ||= data.frontmatter.modified;
+                published ||= data.frontmatter.published;
               } else if (source === "git" && repo) {
                 try {
                   const relativePath = path.relative(repositoryWorkdir, fullFp);
@@ -89,14 +107,14 @@ export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifie
                   console.log(
                     styleText(
                       "yellow",
-                      `\nWarning: ${file.data.filePath!} isn't yet tracked by git, dates will be inaccurate`,
+                      `\nWarning: ${data.filePath!} isn't yet tracked by git, dates will be inaccurate`,
                     ),
                   );
                 }
               }
             }
 
-            (file.data as any).dates = {
+            data.dates = {
               created: coerceDate(fp, created),
               modified: coerceDate(fp, modified),
               published: coerceDate(fp, published),
