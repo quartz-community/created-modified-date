@@ -89,6 +89,7 @@
     "category": "transformer",
     "version": "1.0.0",
     "quartzVersion": ">=5.0.0",
+    "requiresInstall": true,
     "dependencies": [],
     "defaultOrder": 10,
     "defaultEnabled": true,
