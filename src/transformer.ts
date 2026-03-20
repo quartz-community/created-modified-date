@@ -8,10 +8,12 @@ import { styleText } from "util";
 
 export interface CreatedModifiedDateOptions {
   priority: ("frontmatter" | "git" | "filesystem")[];
+  defaultDateType: "created" | "modified" | "published";
 }
 
 const defaultOptions: CreatedModifiedDateOptions = {
   priority: ["frontmatter", "git", "filesystem"],
+  defaultDateType: "modified",
 };
 
 // YYYY-MM-DD
@@ -56,7 +58,9 @@ type FileData = {
     modified: Date;
     published: Date;
   };
+  defaultDateType?: "created" | "modified" | "published";
 };
+
 export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifiedDateOptions>> = (
   userOpts,
 ) => {
@@ -119,6 +123,7 @@ export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifie
               modified: coerceDate(fp, modified),
               published: coerceDate(fp, published),
             };
+            data.defaultDateType = opts.defaultDateType;
           };
         },
       ];
@@ -133,5 +138,6 @@ declare module "vfile" {
       modified: Date;
       published: Date;
     };
+    defaultDateType: "created" | "modified" | "published";
   }
 }

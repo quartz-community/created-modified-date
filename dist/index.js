@@ -5,7 +5,8 @@ import { styleText } from 'util';
 
 // src/transformer.ts
 var defaultOptions = {
-  priority: ["frontmatter", "git", "filesystem"]
+  priority: ["frontmatter", "git", "filesystem"],
+  defaultDateType: "modified"
 };
 var iso8601DateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
 function coerceDate(fp, d) {
@@ -84,6 +85,7 @@ Warning: ${data.filePath} isn't yet tracked by git, dates will be inaccurate`
               modified: coerceDate(fp, modified),
               published: coerceDate(fp, published)
             };
+            data.defaultDateType = opts.defaultDateType;
           };
         }
       ];
