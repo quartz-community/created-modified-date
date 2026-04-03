@@ -130,14 +130,3 @@ export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifie
     },
   };
 };
-
-declare module "vfile" {
-  interface DataMap {
-    dates: {
-      created: Date;
-      modified: Date;
-      published: Date;
-    };
-    defaultDateType: "created" | "modified" | "published";
-  }
-}
