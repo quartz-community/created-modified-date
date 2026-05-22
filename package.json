@@ -98,7 +98,8 @@
         "frontmatter",
         "git",
         "filesystem"
-      ]
+      ],
+      "defaultDateType": "modified"
     },
     "optionSchema": {
       "priority": {
@@ -111,6 +112,14 @@
             "filesystem"
           ]
         }
+      },
+      "defaultDateType": {
+        "type": "enum",
+        "values": [
+          "created",
+          "modified",
+          "published"
+        ]
       }
     }
   }
