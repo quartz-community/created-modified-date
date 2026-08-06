@@ -19,6 +19,31 @@ const defaultOptions: CreatedModifiedDateOptions = {
 // YYYY-MM-DD
 const iso8601DateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
 
+// Chinese date format: 2025年8月13日 14:30 / 2025年08月13日 14:30:00 / 2025年8月13日
+const chineseDateRegex =
+  /^(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/;
+
+function parseChineseDate(str: string): Date | null {
+  const m = chineseDateRegex.exec(str);
+  if (!m) return null;
+
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10) - 1;
+  const day = parseInt(m[3], 10);
+  const hour = m[4] !== undefined ? parseInt(m[4], 10) : 0;
+  const minute = m[5] !== undefined ? parseInt(m[5], 10) : 0;
+  const second = m[6] !== undefined ? parseInt(m[6], 10) : 0;
+
+  const dt = new Date(year, month, day, hour, minute, second);
+
+  // Validate date (e.g. reject Feb 30)
+  if (dt.getFullYear() !== year || dt.getMonth() !== month || dt.getDate() !== day) {
+    return null;
+  }
+
+  return dt;
+}
+
 function coerceDate(fp: string, d: unknown): Date {
   // check ISO8601 date-only format
   // we treat this one as local midnight as the normal
@@ -27,8 +52,20 @@ function coerceDate(fp: string, d: unknown): Date {
     d = `${d}T00:00:00`;
   }
 
+  // Try parsing Chinese date format (e.g. "2025年8月13日 14:30")
+  let parsed: Date | null = null;
+  if (typeof d === "string") {
+    parsed = parseChineseDate(d);
+  }
+
   const dt =
-    d === undefined ? new Date() : d === null ? new Date(0) : new Date(d as string | number | Date);
+    parsed !== null
+      ? parsed
+      : d === undefined
+        ? new Date()
+        : d === null
+          ? new Date(0)
+          : new Date(d as string | number | Date);
   const invalidDate = isNaN(dt.getTime()) || dt.getTime() === 0;
   if (invalidDate && d !== undefined) {
     console.log(
