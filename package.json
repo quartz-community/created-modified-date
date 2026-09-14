@@ -1,6 +1,6 @@
 {
   "name": "@quartz-community/created-modified-date",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Created and modified date transformer plugin for Quartz",
   "type": "module",
   "license": "MIT",
@@ -59,7 +59,7 @@
     }
   },
   "dependencies": {
-    "@quartz-community/types": "^0.2.1"
+    "@quartz-community/types": "^1.0.0"
   },
   "devDependencies": {
     "@napi-rs/simple-git": "^0.1.19",
