@@ -1,3 +1,13 @@
+## 1.0.1
+
+### Patch Changes
+
+- Widen the `@napi-rs/simple-git` peer range to `^0.1.19 || ^1.0.0`.
+
+  Quartz core now depends on `@napi-rs/simple-git@1.x`, which fell outside the previous
+  peer range and caused `npm install`/`npm ci` to fail with ERESOLVE. Widening is additive
+  and does not break existing consumers on 0.1.x.
+
 # Changelog
 
 ## 1.0.0
