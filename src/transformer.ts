@@ -61,6 +61,19 @@ type FileData = {
   defaultDateType?: "created" | "modified" | "published";
 };
 
+/**
+ * A file's path inside its git repository, `/`-separated as git stores it. On Windows
+ * `path.relative` gives `content\\notes\\a.md`, which names no file in git's history, so
+ * every note in a folder fell back to "isn't yet tracked by git".
+ */
+export function gitRelativePath(
+  workdir: string,
+  filePath: string,
+  pathModule: Pick<typeof path, "relative" | "sep"> = path,
+): string {
+  return pathModule.relative(workdir, filePath).split(pathModule.sep).join("/");
+}
+
 export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifiedDateOptions>> = (
   userOpts,
 ) => {
@@ -105,8 +118,9 @@ export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifie
                 published ||= data.frontmatter.published;
               } else if (source === "git" && repo) {
                 try {
-                  const relativePath = path.relative(repositoryWorkdir, fullFp);
-                  modified ||= await repo.getFileLatestModifiedDateAsync(relativePath);
+                  modified ||= await repo.getFileLatestModifiedDateAsync(
+                    gitRelativePath(repositoryWorkdir, fullFp),
+                  );
                 } catch {
                   console.log(
                     styleText(
