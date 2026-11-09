@@ -1,6 +1,6 @@
 {
   "name": "@quartz-community/created-modified-date",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Created and modified date transformer plugin for Quartz",
   "type": "module",
   "license": "MIT",
