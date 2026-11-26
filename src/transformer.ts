@@ -19,27 +19,31 @@ const defaultOptions: CreatedModifiedDateOptions = {
 // YYYY-MM-DD
 const iso8601DateOnlyRegex = /^\d{4}-\d{2}-\d{2}$/;
 
-function coerceDate(fp: string, d: unknown): Date {
-  // check ISO8601 date-only format
-  // we treat this one as local midnight as the normal
-  // js date ctor treats YYYY-MM-DD as UTC midnight
+type DateType = "created" | "modified" | "published";
+
+/**
+ * A date value from frontmatter, git or the file system as a `Date`, or `undefined` when it
+ * doesn't give one (missing, `null`, empty, the epoch, or a value `Date` can't parse; the last
+ * prints a warning). ISO 8601 date-only values (`2024-03-05`) are local midnight: the `Date`
+ * constructor would read them as UTC midnight.
+ */
+export function parseDate(fp: string, d: unknown): Date | undefined {
+  if (d === undefined || d === null || d === "") return undefined;
   if (typeof d === "string" && iso8601DateOnlyRegex.test(d)) {
     d = `${d}T00:00:00`;
   }
-
   const dt =
-    d === undefined ? new Date() : d === null ? new Date(0) : new Date(d as string | number | Date);
-  const invalidDate = isNaN(dt.getTime()) || dt.getTime() === 0;
-  if (invalidDate && d !== undefined) {
+    d instanceof Date ? d : typeof d === "string" || typeof d === "number" ? new Date(d) : null;
+  if (!dt || isNaN(dt.getTime()) || dt.getTime() === 0) {
     console.log(
       styleText(
         "yellow",
-        `\nWarning: found invalid date "${d}" in \`${fp}\`. Supported formats: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date#date_time_string_format`,
+        `\nWarning: found invalid date "${String(d)}" in \`${fp}\`. Supported formats: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date#date_time_string_format`,
       ),
     );
+    return undefined;
   }
-
-  return invalidDate ? new Date() : dt;
+  return dt;
 }
 
 type MaybeDate = undefined | string | number | Date | null;
@@ -58,7 +62,8 @@ type FileData = {
     modified: Date;
     published: Date;
   };
-  defaultDateType?: "created" | "modified" | "published";
+  defaultDateType?: DateType;
+  fallbackDates?: DateType[];
 };
 
 /**
@@ -124,23 +129,26 @@ export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifie
       return [
         () => {
           const findRepo = createRepoFinder();
-          let useGit = false;
-          if (opts.priority.includes("git")) {
-            useGit = findRepo(realPathOrResolved(ctx.argv.directory)) !== undefined;
-            if (!useGit) {
-              console.log(
-                styleText(
-                  "yellow",
-                  `\nWarning: couldn't find git repository for ${ctx.argv.directory}`,
-                ),
-              );
-            }
+          const useGit = opts.priority.includes("git");
+          // Git is looked up per file: the content folder may be outside any repository while a
+          // (symlinked) folder in it is a vault with its own. Notes outside every repository get
+          // their dates from the next source; a directory without one is reported once.
+          const contentHasRepo =
+            useGit && findRepo(realPathOrResolved(ctx.argv.directory)) !== undefined;
+          if (useGit && !contentHasRepo) {
+            console.log(
+              styleText(
+                "yellow",
+                `\nWarning: couldn't find git repository for ${ctx.argv.directory}; notes outside a git repository get no git dates`,
+              ),
+            );
           }
+          const reportedDirs = new Set<string>();
 
           return async (_tree: Root, file: VFile) => {
-            let created: MaybeDate = undefined;
-            let modified: MaybeDate = undefined;
-            let published: MaybeDate = undefined;
+            let created: Date | undefined = undefined;
+            let modified: Date | undefined = undefined;
+            let published: Date | undefined = undefined;
 
             const data = file.data as FileData;
             const fp = data.relativePath!;
@@ -148,19 +156,34 @@ export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifie
             for (const source of opts.priority) {
               if (source === "filesystem") {
                 const st = await fs.promises.stat(fullFp);
-                created ||= st.birthtimeMs;
-                modified ||= st.mtimeMs;
+                // (some file systems have no birth time: 0)
+                if (st.birthtimeMs > 0) created ??= new Date(st.birthtimeMs);
+                if (st.mtimeMs > 0) modified ??= new Date(st.mtimeMs);
               } else if (source === "frontmatter" && data.frontmatter) {
-                created ||= data.frontmatter.created;
-                modified ||= data.frontmatter.modified;
-                published ||= data.frontmatter.published;
+                // an invalid value is skipped (with a warning): the next source fills the date
+                created ??= parseDate(fp, data.frontmatter.created);
+                modified ??= parseDate(fp, data.frontmatter.modified);
+                published ??= parseDate(fp, data.frontmatter.published);
               } else if (source === "git" && useGit && !modified) {
+                const realFp = realPathOrResolved(fullFp);
+                const dir = path.dirname(realFp);
+                const git = findRepo(dir);
+                if (!git) {
+                  // with no repository for the content folder that was reported above
+                  if (contentHasRepo && !reportedDirs.has(dir)) {
+                    reportedDirs.add(dir);
+                    console.log(
+                      styleText("yellow", `\nWarning: couldn't find git repository for ${dir}`),
+                    );
+                  }
+                  continue;
+                }
                 try {
-                  const realFp = realPathOrResolved(fullFp);
-                  const git = findRepo(path.dirname(realFp));
-                  if (!git) throw new Error(`no git repository for ${realFp}`);
-                  modified = await git.repo.getFileLatestModifiedDateAsync(
-                    gitRelativePath(git.workdir, realFp),
+                  modified = parseDate(
+                    fp,
+                    await git.repo.getFileLatestModifiedDateAsync(
+                      gitRelativePath(git.workdir, realFp),
+                    ),
                   );
                 } catch {
                   console.log(
@@ -173,11 +196,23 @@ export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifie
               }
             }
 
-            data.dates = {
-              created: coerceDate(fp, created),
-              modified: coerceDate(fp, modified),
-              published: coerceDate(fp, published),
+            // A date no source gave is the build time, so every page has one (RSS, sitemaps
+            // and page lists sort by it). Those stand-ins are listed in \`fallbackDates\`, so
+            // consumers can tell them apart from real dates (Quartz leaves them out of
+            // contentIndex.json and the page's meta tags).
+            const now = new Date();
+            const fallbackDates: DateType[] = [];
+            const orNow = (type: DateType, d: Date | undefined): Date => {
+              if (d) return d;
+              fallbackDates.push(type);
+              return new Date(now);
             };
+            data.dates = {
+              created: orNow("created", created),
+              modified: orNow("modified", modified),
+              published: orNow("published", published),
+            };
+            data.fallbackDates = fallbackDates;
             data.defaultDateType = opts.defaultDateType;
           };
         },

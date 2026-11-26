@@ -140,3 +140,105 @@ describe("git dates with a symlinked content folder", () => {
     expect(realPathOrResolved(dangling)).toBe(path.resolve(dangling));
   });
 });
+
+type Dates = { created: Date; modified: Date; published: Date };
+type DateData = { dates?: Dates; fallbackDates?: string[] };
+
+async function runOn(
+  directory: string,
+  data: Record<string, unknown>,
+  opts: Parameters<typeof CreatedModifiedDate>[0] = {},
+): Promise<DateData> {
+  const ctx = { argv: { directory } } as unknown as BuildCtx;
+  const [factory] = CreatedModifiedDate(opts).markdownPlugins!(ctx) as [
+    () => (tree: unknown, file: VFile) => Promise<void>,
+  ];
+  const file = new VFile("");
+  file.data = data as never;
+  await factory()({ type: "root", children: [] }, file);
+  return file.data as DateData;
+}
+
+describe("dates no source gives", () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "created-modified-date-fallback-"));
+    fs.writeFileSync(path.join(dir, "a.md"), "# A\n");
+  });
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const note = (frontmatter: Record<string, unknown>) => ({
+    relativePath: "a.md",
+    filePath: path.join(dir, "a.md"),
+    frontmatter,
+  });
+
+  it("lists a missing published date in fallbackDates (it is the build time)", async () => {
+    const before = Date.now();
+    const data = await runOn(dir, note({}), { priority: ["frontmatter", "filesystem"] });
+    expect(data.fallbackDates).toEqual(["published"]);
+    expect(data.dates!.published.getTime()).toBeGreaterThanOrEqual(before);
+    expect(data.dates!.modified.getTime()).toBe(
+      new Date(fs.statSync(path.join(dir, "a.md")).mtimeMs).getTime(),
+    );
+  });
+
+  it("an invalid published date is a stand-in too", async () => {
+    const data = await runOn(dir, note({ published: "not a date" }), {
+      priority: ["frontmatter"],
+    });
+    expect(data.fallbackDates).toEqual(["created", "modified", "published"]);
+  });
+
+  it("a frontmatter date is not a fallback", async () => {
+    const data = await runOn(dir, note({ published: "2024-03-05" }), {
+      priority: ["frontmatter", "filesystem"],
+    });
+    expect(data.fallbackDates).toEqual([]);
+    expect(data.dates!.published.getTime()).toBe(new Date(2024, 2, 5).getTime());
+  });
+
+  it("an invalid frontmatter date gives way to the next source", async () => {
+    const data = await runOn(dir, note({ modified: "garbage" }), {
+      priority: ["frontmatter", "filesystem"],
+    });
+    expect(data.dates!.modified.getTime()).toBe(
+      new Date(fs.statSync(path.join(dir, "a.md")).mtimeMs).getTime(),
+    );
+    expect(data.fallbackDates).not.toContain("modified");
+  });
+});
+
+describe("git dates for a symlinked vault in a content folder outside git", () => {
+  // content/ is in no repository, content/vault -> a vault with its own (decided per file)
+  let base: string;
+  beforeAll(() => {
+    base = fs.mkdtempSync(path.join(os.tmpdir(), "created-modified-date-sub-"));
+    const vault = path.join(base, "vault");
+    fs.mkdirSync(vault);
+    fs.writeFileSync(path.join(vault, "a.md"), "# A\n");
+    const run = (...args: string[]) =>
+      execFileSync("git", args, {
+        cwd: vault,
+        timeout: 30_000,
+        stdio: "pipe",
+        env: { ...process.env, GIT_COMMITTER_DATE: "2023-02-01T10:00:00Z" },
+      });
+    run("init", "-q");
+    run("add", ".");
+    run("-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "a");
+    fs.mkdirSync(path.join(base, "content"));
+    fs.symlinkSync(vault, path.join(base, "content", "vault"), "dir");
+  });
+  afterAll(() => fs.rmSync(base, { recursive: true, force: true }));
+
+  it("reads the vault's commit date", async () => {
+    // (os.tmpdir() may itself be inside a repository; then this tests the same path anyway)
+    const data = await runOn(
+      path.join(base, "content"),
+      { relativePath: "vault/a.md", filePath: path.join(base, "content", "vault", "a.md") },
+      { priority: ["git"] },
+    );
+    expect(data.dates!.modified.toISOString()).toBe("2023-02-01T10:00:00.000Z");
+    expect(data.fallbackDates).toEqual(["created", "published"]);
+  });
+});
