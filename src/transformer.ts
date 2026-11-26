@@ -74,6 +74,46 @@ export function gitRelativePath(
   return pathModule.relative(workdir, filePath).split(pathModule.sep).join("/");
 }
 
+/**
+ * `p` with every symlink resolved, or just made absolute when it can't be resolved (a dangling
+ * link keeps the old behaviour: a "not tracked by git" warning instead of a hard failure).
+ */
+export function realPathOrResolved(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+type GitRepo = { repo: Repository; workdir: string };
+
+/**
+ * Finds the git repository of each file's *real* location. `content/` (or a folder in it) is
+ * often a symlink to an Obsidian vault kept in its own repository: `Repository.discover` follows
+ * the link, so the file path has to be resolved the same way before it is made relative to the
+ * repository's workdir (otherwise it points back out of the repository and every lookup fails).
+ * Results are cached per directory.
+ */
+export function createRepoFinder(
+  discover: (dir: string) => Repository = (dir) => Repository.discover(dir),
+) {
+  const byDir = new Map<string, GitRepo | undefined>();
+  return (dir: string): GitRepo | undefined => {
+    if (byDir.has(dir)) return byDir.get(dir);
+    let found: GitRepo | undefined;
+    try {
+      const repo = discover(dir);
+      const workdir = repo.workdir();
+      if (workdir) found = { repo, workdir: realPathOrResolved(workdir) };
+    } catch {
+      found = undefined;
+    }
+    byDir.set(dir, found);
+    return found;
+  };
+}
+
 export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifiedDateOptions>> = (
   userOpts,
 ) => {
@@ -83,13 +123,11 @@ export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifie
     markdownPlugins(ctx) {
       return [
         () => {
-          let repo: Repository | undefined = undefined;
-          let repositoryWorkdir: string;
+          const findRepo = createRepoFinder();
+          let useGit = false;
           if (opts.priority.includes("git")) {
-            try {
-              repo = Repository.discover(ctx.argv.directory);
-              repositoryWorkdir = repo.workdir() ?? ctx.argv.directory;
-            } catch (e) {
+            useGit = findRepo(realPathOrResolved(ctx.argv.directory)) !== undefined;
+            if (!useGit) {
               console.log(
                 styleText(
                   "yellow",
@@ -116,10 +154,13 @@ export const CreatedModifiedDate: QuartzTransformerPlugin<Partial<CreatedModifie
                 created ||= data.frontmatter.created;
                 modified ||= data.frontmatter.modified;
                 published ||= data.frontmatter.published;
-              } else if (source === "git" && repo) {
+              } else if (source === "git" && useGit && !modified) {
                 try {
-                  modified ||= await repo.getFileLatestModifiedDateAsync(
-                    gitRelativePath(repositoryWorkdir, fullFp),
+                  const realFp = realPathOrResolved(fullFp);
+                  const git = findRepo(path.dirname(realFp));
+                  if (!git) throw new Error(`no git repository for ${realFp}`);
+                  modified = await git.repo.getFileLatestModifiedDateAsync(
+                    gitRelativePath(git.workdir, realFp),
                   );
                 } catch {
                   console.log(
