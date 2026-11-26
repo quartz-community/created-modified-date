@@ -1,3 +1,10 @@
+## 1.0.5
+
+### Patch Changes
+
+- 964c33f: fix: a date no source gives is still the build time (RSS, sitemaps and page lists need one), but it is now listed in `file.data.fallbackDates` (for example `["published"]` for a page without `published:`), so Quartz can leave it out of `contentIndex.json` and the page's `article:published_time` instead of presenting the build time as a real date. An invalid frontmatter date (with its warning) no longer blocks the next source: `modified: garbage` falls back to git or the file system, as a missing value does.
+- 964c33f: fix: whether git dates are used is decided per note, by the repository that contains it. Before, a content folder outside any git repository turned git off for the whole build, so a folder in it that links to a vault with its own repository got file-system dates. Notes outside every repository now get their dates from the next source in `priority`.
+
 ## 1.0.4
 
 ### Patch Changes
