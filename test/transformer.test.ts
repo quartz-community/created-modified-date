@@ -1,11 +1,36 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { VFile } from "vfile";
 import type { BuildCtx } from "@quartz-community/types";
-import { CreatedModifiedDate, gitRelativePath, realPathOrResolved } from "../src/transformer.js";
+import {
+  CreatedModifiedDate,
+  gitRelativePath,
+  parseDate,
+  realPathOrResolved,
+} from "../src/transformer.js";
+
+describe("parseDate", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([[true], [[1]], [0], [{}]])("gives no date for %j (with a warning)", (value) => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(parseDate("a.md", value)).toBeUndefined();
+    expect(log).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([[undefined], [null], [""]])("gives no date for %j, silently", (value) => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(parseDate("a.md", value)).toBeUndefined();
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("reads a date-only string as local midnight", () => {
+    expect(parseDate("a.md", "2024-01-02")?.getTime()).toBe(new Date(2024, 0, 2).getTime());
+  });
+});
 
 describe("gitRelativePath", () => {
   // git stores paths with "/" on every OS; path.relative on Windows gives backslashes
@@ -67,6 +92,31 @@ describe("git dates", () => {
     await factory()({ type: "root", children: [] }, file);
     const dates = (file.data as { dates?: { modified?: Date } }).dates;
     expect(dates?.modified?.toISOString()).toBe("2024-03-05T12:00:00.000Z");
+  });
+
+  const runWithModified = async (priority: ("frontmatter" | "git")[]) => {
+    const ctx = { argv: { directory: path.join(root, "content") } } as unknown as BuildCtx;
+    const [factory] = CreatedModifiedDate({ priority }).markdownPlugins!(ctx) as [
+      () => (tree: unknown, file: VFile) => Promise<void>,
+    ];
+    const file = new VFile("");
+    file.data = {
+      relativePath: "notes/a.md",
+      filePath: path.join(root, "content", "notes", "a.md"),
+      frontmatter: { modified: "2021-05-05" },
+    } as never;
+    await factory()({ type: "root", children: [] }, file);
+    return (file.data as { dates: { modified: Date } }).dates.modified.getTime();
+  };
+
+  it("a frontmatter date before git wins over the commit date", async () => {
+    expect(await runWithModified(["frontmatter", "git"])).toBe(new Date(2021, 4, 5).getTime());
+  });
+
+  it("the commit date before the frontmatter wins over the frontmatter date", async () => {
+    expect(await runWithModified(["git", "frontmatter"])).toBe(
+      new Date("2024-03-05T12:00:00Z").getTime(),
+    );
   });
 });
 
@@ -205,6 +255,37 @@ describe("dates no source gives", () => {
       new Date(fs.statSync(path.join(dir, "a.md")).mtimeMs).getTime(),
     );
     expect(data.fallbackDates).not.toContain("modified");
+  });
+
+  it("a valid frontmatter date wins over the next source", async () => {
+    const data = await runOn(dir, note({ created: "2024-01-02", modified: "2024-03-04" }), {
+      priority: ["frontmatter", "filesystem"],
+    });
+    expect(data.dates!.created.getTime()).toBe(new Date(2024, 0, 2).getTime());
+    expect(data.dates!.modified.getTime()).toBe(new Date(2024, 2, 4).getTime());
+    expect(data.fallbackDates).toEqual(["published"]);
+  });
+
+  describe("a file system without birth or modification times (0)", () => {
+    afterEach(() => vi.restoreAllMocks());
+    const stat = (st: { birthtimeMs: number; mtimeMs: number }) =>
+      vi.spyOn(fs.promises, "stat").mockResolvedValue(st as fs.Stats);
+
+    it("has no created date, not the epoch", async () => {
+      stat({ birthtimeMs: 0, mtimeMs: Date.UTC(2024, 0, 1) });
+      const data = await runOn(dir, note({}), { priority: ["filesystem"] });
+      expect(data.fallbackDates).toEqual(["created", "published"]);
+      expect(data.dates!.created.getTime()).not.toBe(0);
+      expect(data.dates!.modified.getTime()).toBe(Date.UTC(2024, 0, 1));
+    });
+
+    it("has no modified date, not the epoch", async () => {
+      stat({ birthtimeMs: Date.UTC(2024, 0, 1), mtimeMs: 0 });
+      const data = await runOn(dir, note({}), { priority: ["filesystem"] });
+      expect(data.fallbackDates).toEqual(["modified", "published"]);
+      expect(data.dates!.modified.getTime()).not.toBe(0);
+      expect(data.dates!.created.getTime()).toBe(Date.UTC(2024, 0, 1));
+    });
   });
 });
 
